@@ -129,9 +129,12 @@ plot_type = 'radplot'
 #
 #FILE  = '/home/mikhail/sci/scatter/RA_catalog_rags28_2021-02-24.txt'
 #FILE  = '/homes/mlisakov/sci/scatter/RA_catalog_rags28_2021-02-24.txt'
-FILE  = '/homes/mlisakov/sci/scatter/RA_catalog_rags28+raks18el_2021-04-16.txt'
+#FILE  = '/homes/mlisakov/sci/scatter/RA_catalog_rags28+raks18el_2021-04-16.txt'
+#UPPERLIM = '/homes/mlisakov/sci/scatter/RA_rags28_nondet_uplims_2021-05-12.txt'
 
-UPPERLIM = '/homes/mlisakov/sci/scatter/RA_rags28_nondet_uplims_2021-05-12.txt'
+FILE  = 'RA_catalog_rags28+raks18el_2021-04-16.txt'
+UPPERLIM = 'RA_rags28_nondet_uplims_2021-05-12.txt'
+
 
 
 df = read_cat(FILE)
