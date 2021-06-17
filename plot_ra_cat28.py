@@ -16,22 +16,22 @@ from scipy.optimize import curve_fit
 import scipy.spatial
 #from tabulate import tabulate
 
-def read_cat(FILE, add_paths = False):
+def read_cat(FILE, add_paths=False):
     '''read catalogue into a dataframe.
-    FORMAT: 
+    FORMAT:
   source       j2000     exper        date      time band polar      sta1      sta2 elev1 elev2     snr base_ml   base_cm     pa    ampl ampl_err  coeff  solint  data_len
 0003-066  J0006-0623  raes03fb  2012-11-01  20:00:00    C    RR  EVPTRIYA  EFLSBERG  35.3  32.9  1743.8    32.5 2.023e+08  -79.3  0.0211   0.0012 1.0000      60       596
         '''
-    df = pd.read_csv(FILE, comment='#', sep = '\s+', engine = 'python')
-    df = df.drop(['j2000', 'coeff', 'solint' , 'data_len'], axis = 1)
+    df = pd.read_csv(FILE, comment='#', sep='\s+', engine='python')
+    df = df.drop(['j2000', 'coeff', 'solint' , 'data_len'], axis=1)
     # combine date and time into a datetime-dtype column
     df.loc[:, 'start'] = df.date + ' ' + df.time
     df.start = pd.to_datetime(df.start)
     
     if add_paths:
         # add paths to logfiles etc.
-        df.loc[:,'path'] = df.loc[:,'date'].str[0:7].str.replace('-','_') + '/' +  df.loc[:, 'date'].str.replace('-', '_') + '_' + df.loc[: , 'exper']
-        df.loc[:,'antab'] = df.loc[:,'date'].str[0:7].str.replace('-','_') + '/' +  df.loc[:, 'date'].str.replace('-', '_') + '_' + df.loc[: , 'exper'] + '/' + df.loc[:, 'exper'] + df.loc[:,'band'].str.lower() + '.antab'
+        df.loc[:, 'path'] = df.loc[:, 'date'].str[0:7].str.replace('-', '_') + '/' +  df.loc[:, 'date'].str.replace('-', '_') + '_' + df.loc[:, 'exper']
+        df.loc[:, 'antab'] = df.loc[:, 'date'].str[0:7].str.replace('-', '_') + '/' +  df.loc[:, 'date'].str.replace('-', '_') + '_' + df.loc[:, 'exper'] + '/' + df.loc[:, 'exper'] + df.loc[:, 'band'].str.lower() + '.antab'
     
     return df
 
@@ -87,14 +87,34 @@ def gauss(x, *p):
     A, sigma = p
     return A*np.exp(-(x)**2/(2.*sigma**2))    # mu is set to 0 explicitly
     
-def fit_gauss(df):
+def fit_gauss(df, zero_flux = None):
     '''Fit radplot data with gauss().
-    Implicitly assume that in the input df there are columns 'base_ml' and 'ampl' '''
+    Implicitly assume that in the input df there are columns 'base_ml' and 'ampl' 
+    
+    Args:
+        df: DataFrame with columns base_ml and ampl
+        zero_flux (float, default = None): Flux density at zero baselines take from 
+            single-dish observations. Used only if set to non None. 
+        
+    Returns:
+        xi, yi: coordinates of the fitted funstion
+        
+    '''
     # df here is local var to the function
     # sort df as base_ml
     df = df.sort_values(by = 'base_ml')
-    xdata =  np.append( -np.flip(df.base_ml) , df.base_ml) # make data symmetric around zero for a Gaussian fit
-    ydata =  np.append(np.flip(df.ampl),df.ampl)
+    
+    if zero_flux is not None:
+        print('Fitting with a zero flux set to {} Jy'.format(zero_flux))
+        # make data symmetric around zero for a Gaussian fit adding zero for zero flux
+        xdata =  np.append( -np.flip(df.base_ml) , 0) 
+        xdata =  np.append( xdata , df.base_ml)
+        ydata =  np.append(np.flip(df.ampl), zero_flux)
+        ydata =  np.append(ydata,df.ampl)
+    else:
+        xdata =  np.append( -np.flip(df.base_ml) , df.base_ml) # make data symmetric around zero for a Gaussian fit
+        ydata =  np.append(np.flip(df.ampl),df.ampl)
+        
     p0 = [np.max(ydata), np.max(xdata)/3]  # for a Gaussian fit : p0 = [ Amplitude, sigma]. Position of the center is always zero in radplots.
     coeff, var_matrix = curve_fit(gauss, xdata, ydata, p0=p0) 
     xi = np.linspace(0, np.max(xdata), 1000)
@@ -131,8 +151,8 @@ plot_type = 'radplot'
 #FILE  = '/homes/mlisakov/sci/scatter/RA_catalog_rags28_2021-02-24.txt'
 #FILE  = '/homes/mlisakov/sci/scatter/RA_catalog_rags28+raks18el_2021-04-16.txt'
 #UPPERLIM = '/homes/mlisakov/sci/scatter/RA_rags28_nondet_uplims_2021-05-12.txt'
-
-FILE  = 'RA_catalog_rags28+raks18el_2021-04-16.txt'
+FILE =  'RA_catalog_rags28_2021-06-10.txt'
+#FILE  = 'RA_catalog_rags28+raks18el_2021-04-16.txt'
 UPPERLIM = 'RA_rags28_nondet_uplims_2021-05-12.txt'
 
 
@@ -257,19 +277,63 @@ if plot_type == 'radplot':
     dd = s1l
     ddU = s1lU
     
-#    dd= dd.loc[dd.date < '2017-12-01']
-#    dd= dd.loc[dd.date > '2017-12-01']
+    # Due to changed Tcal of TORUN.
+    # Correct TR amplitudes (multiply by a factor sqrt(new Tcal / old Tcal)):
+    # Old Tcals: RCP = 9.3, LCP = 10.2 K
+    # in 2017:  RCP = 0.82   # seems to work well for 2209+236
+    #           LCP = 0.84   # seems to work well for 2209+236
+    # in 2018:  RCP = 2.22
+    #           LCP = 1.98
     
-    xi, yi = fit_gauss(dd)
+    dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date < '2017-12-31') & (dd.polar == 'RR')  , 'ampl'] =\
+        dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date < '2017-12-31') & (dd.polar == 'RR')  , 'ampl'] * 0.82
+    dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date < '2017-12-31') & (dd.polar == 'LL')  , 'ampl'] =\
+        dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date < '2017-12-31') & (dd.polar == 'LL')  , 'ampl'] * 0.84
+    dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date > '2017-12-31') & (dd.polar == 'RR')  , 'ampl'] =\
+        dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date > '2017-12-31') & (dd.polar == 'RR')  , 'ampl'] * 2.22
+    dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date > '2017-12-31') & (dd.polar == 'LL')  , 'ampl'] =\
+        dd.loc[((dd.sta1 == 'TORUN') | (dd.sta2 == 'TORUN')) & (dd.date > '2017-12-31') & (dd.polar == 'LL')  , 'ampl'] * 1.98
+#     
+    
+#    dd= dd.loc[dd.date < '2018-03-01']
+#    dd= dd.loc[dd.date > '2018-03-01']
+    
+#    dd = dd.loc[(dd.exper == 'rags28ax') & (dd.polar == 'RR')]
+#    dd = dd.loc[(dd.sta1 != 'TORUN') & (dd.sta2 != 'TORUN') & (dd.sta1 != 'WSTRB-07') & (dd.sta2 != 'WSTRB-07')]
+#    dd = dd.loc[ (dd.sta1 != 'WSTRB-07') & (dd.sta2 != 'WSTRB-07')]
+
     band = dd.band.unique()[0].lower()
     source = dd.source.unique()[0]
     
+    if source == '0657+172':
+        if band == 'l':
+            zero_flux = 0.82
+        if band == 'c':
+            zero_flux = 0.67
+    elif source == '2209+236':
+        if band == 'l':
+            zero_flux = 0.82
+        if band == 'c':
+            zero_flux = 0.83
+    else:
+        zero_flux = None
+
+    
+    
+    
+    dfit = dd.loc[ (dd.sta1 != 'WSTRB-07') & (dd.sta2 != 'WSTRB-07')]
+#    xi, yi = fit_gauss(dd, zero_flux = zero_flux)
+    xi, yi = fit_gauss(dfit, zero_flux = zero_flux)
+    
     
     # plot one source at a time
-    fig,ax = plt.subplots(1,1)
+    fig,ax = plt.subplots(1,1, figsize = (12,8))
     x = dd.base_ml
     y = dd.ampl
     
+    
+    if zero_flux is not None:
+        ax.plot(0, zero_flux, '*r', label = 'Zero flux')
         
     ax.plot(x.loc[dd.polar == 'RR'],y.loc[dd.polar == 'RR'], 'o', label = '{}, {}-band, RR'.format(source, band.upper()))
     ax.plot(x.loc[dd.polar == 'LL'],y.loc[dd.polar == 'LL'], 'o', label = '{}, {}-band, LL'.format(source, band.upper()))
